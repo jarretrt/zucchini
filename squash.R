@@ -10,6 +10,9 @@
 ## questions:
 ##   - what happens if you treat indicators as numeric?
 ##   - logistic regresssion?
+##   - can we use squashing to deal with missing data? 
+##     (i.e. to squash to a smaller, completed dataset, 
+##     that preserves all of the information in the data)
 
 library('dplyr')
 library('magrittr')
@@ -59,79 +62,27 @@ data_sphere_partition <- function(dat, layers=3) {
 reduced_sample_size <- function(n, alpha)
   ceiling(max(1, alpha*log(n, 2)))
 
-## compute up to fourth order moments for spedified data
-## dat - a data frame with only numeric variables
-## m   - reduced sample size (determines how many moments to return)
-compute_moments_v1 <- function(dat, m = nrow(dat)) {
-
-  ## if weight column missing, assume unit weights
-  if(!('(weight)' %in% colnames(dat)))
-    dat %<>% cbind('(weight)'= 1)
-  
-  ## extract weights
-  wix <- match('(weight)', colnames(dat))
-  wgt <- dat[,wix]
-  
-  ## compute weighted sums (for weighted mean)
-  cen <- dat %>% apply(1, function(x) 
-      x[wix] * x[-wix]) %>% rowSums
-  
-  ## remove weights  
-  dsc <- dat[,-wix]
-  
-  ## center
-  dsc <- dsc %>% scale(center=cen/sum(wgt), scale=F)
-  
-  ## rejoin weights
-  dsc <- cbind(wgt, dsc)
-  
-  ## number of moments to return
-  k <- m * ncol(dsc)
-  
-  ## compute weighted mixed moments up to fourth order
-  ## x[1] are the weights, and x[-1] are the data
-  ## this could be done in a 'for' loop to cut memory usage
-  mmt <- c(
-    sum(wgt),
-    cen, 
-    dsc %>% apply(1, function(x) 
-      x[1] * (x[-1] %o% x[-1])) %>% rowSums,
-    dsc %>% apply(1, function(x) 
-      x[1] * (x[-1] %o% x[-1] %o% x[-1])) %>% rowSums,
-    dsc %>% apply(1, function(x) 
-      x[1] * (x[-1] %o% x[-1] %o% x[-1] %o% x[-1])) %>% rowSums)
-
-
-  
-  ## return first k moments and remove names
-  return(unname(mmt[1:k]))
-  
-}
-
 ## compute up to second order moments for spedified data
-## dat - a data frame with only numeric variables
+## dat - a data frame with only numeric variables,
+##       including a numeric '(weight)' column
 compute_moments <- function(dat, ...) {
 
-  ## if weight column missing, assume unit weights
-  if(!('(weight)' %in% colnames(dat)))
-    dat %<>% cbind('(weight)'= 1)
-  
-  ## extract weights
-  wix <- match('(weight)', colnames(dat))
-  wgt <- dat[,wix]
-  dsc <- dat[,-wix]
+  ## extract weights (last column)
+  #wix <- match('(weight)', colnames(dat))
+  wgt <- dat[,ncol(dat)]
+  dsc <- dat[,-ncol(dat)]
   
   ## compute weighted sums (for weighted mean)
-  cen <- colSums(wgt*dsc)
+  cen <- (rep(1,nrow(dsc))%*%(wgt*dsc))[1,]
 
   ## center
-  dsc <- dsc %>% scale(center=cen/sum(wgt), scale=F)
+  dsc <- t.default(t.default(dsc)-cen/sum(wgt))
   
   ## compute weighted moments up to second order
-  mmt <- c(sum(wgt), cen, crossprod(sqrt(wgt)*dsc))
-  
+  mmt <- c(sum(wgt), cen, crossprod(dsc*sqrt(wgt)))
+
   ## return moments and remove names
-  return(unname(mmt))
+  return(mmt)
 }
 
 ## names for moments (not used)
@@ -175,42 +126,40 @@ squash.matrix <- function(dat, alpha=1,
   ## reduced sample size
   m <- reduced_sample_size(n, alpha)
  
-  ## calculate moments for full data
-  mmt <- compute_moments(dat, m)
-  
   ## compute ranges (extended) for each variable
   extendrange <- function(x, f=0.05) {
     r <- range(x, na.rm=TRUE)
     r + c(-f, f) * (diff(r) + f)
   }
-  rng <- dat %>% apply(2, extendrange) %>%
+  rng <- apply(dat, 2, extendrange) %>%
     cbind('(weight)'=c(0,n))
 
   ## vectors of min and max values
   ymn <- rep(rng[1,], rep(m,p+1)) %>% matrix(m)
   ymx <- rep(rng[2,], rep(m,p+1)) %>% matrix(m)
 
+  ## add weight to original data
+  dat %<>% cbind("(weight)" = 1)
+  
+  ## calculate moments for full data
+  mmt <- compute_moments(dat)
+  
   ## created inital pseudo data for first partition
-  dat_m <- dat[sample(n, m),] %>%
-    cbind(`(weight)` = 1)
+  dat_m <- dat[sample(n, m),]
   
   ## store some info about the squashed data
   dmn_m <- dimnames(dat_m)
     
+  ## weights for obj. fun; means and vars get priority
+  u <- c(1000, rep(1000, p), diag(rep(500), p) + 500)
+  
   opt <- optim(ilogi(dat_m, ymn, ymx), function(y) {
  
     ## reconstruct data
-    dat_m <- matrix(logi(y, ymn, ymx),
-        nrow=m, dimnames=dmn_m)
+    dat_m <- matrix(logi(y, ymn, ymx), nrow=m)
   
     ## compute moments for reduced data
     mmt_m <- compute_moments(dat_m)
-  
-    ## compute objective function; means and (co-)vars get priority
-    u <- c(1000, rep(1000, p), diag(rep(500), p) + 500)
-    if(length(u) < length(mmt_m))
-      u <- c(u, rep(1, length(mmt_m)-length(u)))
-    u <- u[1:length(mmt_m)]
     
     ## weighted sum of squares for moments
     sum(u * (mmt - mmt_m)^2)  
@@ -221,39 +170,10 @@ squash.matrix <- function(dat, alpha=1,
     warning("failed convergence ", opt$message)
   
   ## reconstruct reduced data
-  dat_m <- opt$par %>% logi(ymn, ymx)
+  dat_m <- logi(opt$par, ymn, ymx)
   
   return(dat_m)
     
-}
-
-## compute weighted mean and vcov
-wtd_mean_vcov <- function(dat) {
-
-  ## if weight column missing, assume unit weights
-  if(!('(weight)' %in% colnames(dat)))
-    dat[,'(weight)'] <- 1
-
-  if(is.data.frame(dat))
-    dat <- as.matrix(dat)
-
-  if(!is.numeric(dat))
-    stop("'dat' must contain only numeric data")
-  
-  wix <- which(colnames(dat) == '(weight)')
-
-  wgt <- dat[,wix]
-
-  cen <- dat %>% apply(1, function(x)
-      x[wix]/sum(wgt) * x[-wix]) %>% rowSums
-
-  dat[,-wix] <- scale(dat[,-wix], center=cen, scale=F)
-
-  vcv <- dat %>% apply(1, function(x)
-    x[wix]/sum(wgt) * x[-wix] %o% x[-wix]) %>% rowSums %>%
-    matrix(length(cen), dimnames=list(names(cen),names(cen)))
-
-  list(mean = cen, vcov = vcv)
 }
 
 missing_pattern <- function(dat) {
