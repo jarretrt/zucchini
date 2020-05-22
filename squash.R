@@ -13,6 +13,7 @@
 ##   - can we use squashing to deal with missing data? 
 ##     (i.e. to squash to a smaller, completed dataset, 
 ##     that preserves all of the information in the data)
+##   - pseudodata are deidentified; can take off server? (idea from @jarretrt)
 
 library('dplyr')
 library('magrittr')
