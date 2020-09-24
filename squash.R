@@ -19,15 +19,15 @@ library('dplyr')
 library('magrittr')
 
 ## use the data sphere method to partition quantitative data
-## dat    - a data frame with only numeric variables
+## dat    - a matrix with only numeric variables
 ## layers - number of layers in partition
 data_sphere_partition <- function(dat, layers=3) {
   
-  if(!all(sapply(dat, is.numeric)))
-    stop("'dat' may only contain numeric data")
+  if(!is.matrix(dat) | !is.numeric(dat))
+    stop("'dat' must be a numeric matrix")
   
   ## scale data 
-  dsc <- dat %>% as.matrix %>% scale 
+  dsc <- dat %>% scale 
   
   ## and compute distances from center
   dst <- dsc %>% `^`(2) %>% rowSums %>% sqrt
@@ -52,11 +52,7 @@ data_sphere_partition <- function(dat, layers=3) {
       ifelse(lay == 2, paste(lay, pyr1, sep='.'),
         paste(lay, pyr1, pyr2, sep='.')))
   
-  dat <- dat %>% mutate(`(partition)` = prt)
-  attr(dat, 'scaled:center') <- attr(dsc, 'scaled:center')
-  attr(dat, 'scaled:scale') <- attr(dsc, 'scaled:scale')
-  attr(dat, 'layer:breaks') <- lev 
-  return(dat)
+  return(prt)
 }
 
 ## formula for computing reduced samples size
@@ -110,9 +106,11 @@ squash <- function(obj, ...)
   UseMethod('squash', obj)
 
 ## squash numeric data matrix (i.e., for an individual partition)
-## dat   - numeric matrix
-## alpha - degree of squashing (see 'reduced_sample_size') 
-## ...   - arguments passed to 'optim'
+## dat     - numeric matrix
+## alpha   - degree of squashing (see 'reduced_sample_size') 
+## method  - passed to 'optim'
+## control - passed to 'optim'
+## ...     - passed to 'optim'
 squash.matrix <- function(dat, alpha=1, 
   method='CG', control=list(maxit=500), ...) {
 
@@ -145,7 +143,7 @@ squash.matrix <- function(dat, alpha=1,
   ## calculate moments for full data
   mmt <- compute_moments(dat)
   
-  ## created inital pseudo data for first partition
+  ## create inital pseudo data
   dat_m <- dat[sample(n, m),]
   
   ## store some info about the squashed data
@@ -199,8 +197,10 @@ missing_pattern <- function(dat) {
 ## dat    - data frame (with possibly categorical variables)
 ## alpha  - degree of squashing (see 'reduced_sample_size') 
 ## method, control - arguments passed to to 'optim'
+## subpart - sub-partitioning method, e.g., DSphere, HypRect
 squash.data.frame <- function(dat, alpha=1,
-  method='CG', control=list(maxit=500)) {
+  method='CG', control=list(maxit=500),
+  subpart=NULL) {
   
   ## if any missing numeric data, create missing pattern
   num <- dat %>% select_if(is.numeric)
@@ -224,7 +224,7 @@ squash.data.frame <- function(dat, alpha=1,
     
     ## squash numeric data
     squ <- as.data.frame(squash(as.matrix(obs),
-      alpha, method, control))
+      alpha, method, control, subpart))
     
     ## reconstruct data
     merge(squ, mis) %>%
