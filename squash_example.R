@@ -48,4 +48,5 @@ iris_ggp +
   geom_line(data=pre, aes(y=fit)) +
   geom_ribbon(data=pre, aes(y=fit, ymin=lwr, ymax=upr,
     fill=Species), alpha=0.5) +
-  theme(legend.position = 'top')
+  theme(legend.position = 'top') + 
+  labs(x='Sepal Width', y='Sepal Length')
