@@ -144,6 +144,12 @@ squash.matrix <- function(dat, alpha=1,
   mmt <- compute_moments(dat)
   
   ## create inital pseudo data
+  ## because the squashed data are not identifiable, and thus
+  ## there is generally no global optimum of the objective function,
+  ## random initialization here causes non-reproducible squashed
+  ## data; TODO need a (more) deterministic version instead; might
+  ## try Gaussian quadrature points that match the estimated mean
+  ## and vcov of the full data
   dat_m <- dat[sample(n, m),]
   
   ## store some info about the squashed data
